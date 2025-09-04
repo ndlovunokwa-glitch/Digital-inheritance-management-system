@@ -6,24 +6,21 @@ on:
     branches: [ main ]      # auto-run on commits to main
 
 jobs:
-  build-doc:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v3
+      
+      - name: Generate URS PDF
+        run: |
+          echo "URS PDF generated here" > URS.pdf
+      
+      - name: Upload URS PDF
+        uses: actions/upload-artifact@v3
         with:
-          node-version: 20
+          name: URS-PDFs
+          path: URS.pdf
 
-      - name: Install md-to-pdf (for HTML→PDF)
-        run: npm install -g md-to-pdf
-
-      - name: Generate URS (Markdown) with OpenAI
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           VERSION="$(date -u +%Y.%m.%d-%H%M)-${GITHUB_SHA::7}"

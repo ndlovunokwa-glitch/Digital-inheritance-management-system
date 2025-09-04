@@ -1,0 +1,83 @@
+name: Generate URS PDF
+
+on:
+  workflow_dispatch: {}     # allows manual runs
+  push:
+    branches: [ main ]      # auto-run on commits to main
+
+jobs:
+  build-doc:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install md-to-pdf (for HTML→PDF)
+        run: npm install -g md-to-pdf
+
+      - name: Generate URS (Markdown) with OpenAI
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          VERSION="$(date -u +%Y.%m.%d-%H%M)-${GITHUB_SHA::7}"
+          cat > prompt.json <<'JSON'
+          {
+            "model": "gpt-5",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are an expert Business Analyst and Technical Writer."
+              },
+              {
+                "role": "user",
+                "content": "Generate a complete, professional, client-ready **User Requirements Specification (URS)** for a **Digital Inheritance Management System**. Requirements: 1) Full URS structure with numbered sections, tables, and populated example data. 2) Include Mermaid diagrams (use case, data/ERD, high-level flow). 3) Neutral color scheme notes and a placeholder for a logo image at top (use ![Logo](https://i.postimg.cc/tgRvJqnS/Logo.png) and a caption), but keep content otherwise tool-agnostic. 4) Clear versioning block that uses this version value: {{VERSION}} and this commit message: {{COMMIT}}. 5) Include a change log, assumptions, constraints, NFRs, and an RTM. 6) Output strictly in Markdown, optimized for PDF conversion."
+              }
+            ]
+          }
+          JSON
+
+          # Inject dynamic values into the prompt
+          sed -i "s/{{VERSION}}/$VERSION/g" prompt.json
+          sed -i "s/{{COMMIT}}/${COMMIT_MSG//\//\\/}/g" prompt.json
+
+          # Call OpenAI and save Markdown
+          curl https://api.openai.com/v1/chat/completions \
+            -sS \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -d @prompt.json \
+            | jq -r '.choices[0].message.content' > URS.md
+
+      - name: Convert Markdown → PDF
+        run: |
+          mkdir -p docs
+          md-to-pdf URS.md --output docs/URS.pdf
+
+      - name: Versioned copy
+        run: |
+          VERSIONED="docs/URS_${{ github.run_id }}_${{ github.sha::7 }}.pdf"
+          cp docs/URS.pdf "$VERSIONED"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: URS-PDFs
+          path: |
+            docs/URS.pdf
+            docs/URS_*.pdf
+
+      - name: Commit PDFs back to repo (optional)
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add docs/*.pdf
+          git commit -m "Auto-generate URS PDFs for ${GITHUB_SHA::7}" || echo "No changes to commit"
+          git push || echo "No push on PRs"
